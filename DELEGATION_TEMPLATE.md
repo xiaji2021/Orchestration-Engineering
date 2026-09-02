@@ -1,21 +1,40 @@
-# Codex 委派模板（复制填空后作为 prompt；项目细节取自 .codex-orchestrate.env）
+# Delegation brief template
 
-## 环境
-- 仓库/worktree（绝对路径）：
-- 分支规则：（worktree 新建分支 / 直接主线；并行会话的文件归属）
-- 必须导出的环境变量：（来自 REQUIRED_ENV；非交互 shell 用解释器绝对路径）
-- 资源预算：（队列/分区、节点×GPU 上限、排除节点、最多作业数）；提交前先查在跑作业
-- 时间盒：≤2 小时；到点先 commit + 写笔记 + 提交作业再收尾
+Copy, fill every field, then send as the worker's prompt. Project values come from
+`.orchestrate.env` / preflight — never leave a field as a placeholder.
+中文：字段没填满就不要发。缺的每一条，最后都会变成一次返工。
 
-## 任务
-- 目标（一句话）：
-- 非目标：
-- 必读文件：
-- 实现要求（编号）：
-- 测试/验收命令：
-- 失败预案：
+## ENVIRONMENT
+- Repo / worktree (absolute path):
+- Branch rule: (new branch in own worktree | direct to mainline) — and, if sessions run in
+  parallel, which files this worker owns
+- Env vars to export: (from `REQUIRED_ENV`; in non-interactive shells call interpreters by
+  absolute path — `conda activate` routinely fails there)
+- Resource budget: (queue/partition, nodes x accelerators, max concurrent jobs, excluded nodes)
+  — check what is already running *before* submitting anything
+- Timebox: <= 2/3 of the backend's hard limit. At the deadline: commit, write notes,
+  submit/record handles, then stop.
 
-## 交付
-- 笔记：<项目笔记路径>（里程碑即写）
-- 报告契约：commits / files / jobs{id,name,queue,resources,log,output_dir} / tests（命令+原样摘要）/ gates / open_risks / next_command
-- 禁止：编造未产出的结果；超出资源预算；改动归属外文件
+## TASK
+- Goal (one sentence):
+- Non-goals:
+- Files to read first:
+- Requirements (numbered):
+- Acceptance command(s) and what counts as passing:
+- If blocked: record the blocker and stop — do not improvise scope.
+
+## DELIVERY
+- Notes file: <path> — append each milestone the moment it lands, not at the end.
+- Report back exactly:
+  ```
+  commits:   [<sha> <subject> ...]
+  files:     [paths touched]
+  handles:   [{id, name, kind: job|process|run, where, resources, log, output_dir}]
+  tests:     <exact command> -> <verbatim summary line>
+  gates:     {invariants checked and their results}
+  risks:     [open risks]
+  next:      <one command the orchestrator can run next>
+  ```
+- Forbidden: reporting results that were not actually produced; exceeding the resource budget;
+  editing files owned by another session; committing secrets; pushing without being asked.
+- Long-running work is **launched and handed back as a handle** — never watched to completion.

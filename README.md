@@ -1,21 +1,82 @@
-# orchestrate-codex skill
+# orchestrate-delegation
 
-让 Claude Code 把实现/实验工作委派给 Codex MCP（`codex` / `codex-reply`），同时保留规划、验证、资源与合并门禁。
+A skill for Claude Code (and any agent host that reads `SKILL.md`) that turns *handing work to
+another agent* into a disciplined loop: **plan → time-boxed brief → fixed report contract →
+independent verification → gated merge**. The orchestrator never accepts a worker's word for
+anything it has not checked itself.
 
-- **`main`**：通用版，任何主机/服务器/集群。调度器、配额、身份切换全部由项目配置 `.codex-orchestrate.env` 注入，skill 本身不含任何站点专名。
-- **`cluster-cscc`**：MBZUAI CSCC 集群特化（Slurm、Lustre `lfs quota`、`iam` 身份切换、坏节点排除、sacct/Lustre 缓存经验）。
+> 中文一句话：让 Claude 当编排者、把实现工作委派出去，同时守住时间盒、资源预算、验证与合并门禁 ——
+> 口头汇报一律不算数。
 
-## 安装
+It grew out of running multi-agent work on an HPC cluster, then had every site-specific name
+removed. What is left is the mechanism, and it degrades gracefully: on a laptop repo with no
+config file at all it still enforces the parts that matter.
+
+## Why bother
+
+Delegation fails in a small number of repeatable ways, and each rule here exists because one of
+them cost real work:
+
+| Failure | Rule |
+|---|---|
+| A hard timeout swallows the session and its final report | one delegation = one milestone inside ⅔ of the limit; journal each milestone as it lands |
+| The worker sits and babysits a queued job until the clock runs out | long work is *launched and handed back as a handle*, never watched |
+| A merge silently deletes submodule gitlinks; an `&&` chain makes the guard a no-op | structural invariants asserted as hard, non-chained checks |
+| A temporary worktree lacks submodules, a path var is unexported, a whole batch fails at import | preflight records the baseline; the brief exports paths explicitly |
+| Two sessions submit the same job, or edit the same file | one thread per task; worktrees or written file ownership |
+| A shared concurrency cap is breached because nobody told the worker the number | the remaining budget goes into the brief as a number |
+| A status endpoint returns empty and a monitor calls the job "done" | empty output is flakiness, never completion |
+| The report says the tests pass | rerun them yourself; spot-check one raw output, not the summary table |
+
+## Works with any worker
+
+The skill defines what a worker backend must expose — how to start it, whether a thread can be
+resumed, its hard wall-clock limit — and adapts. Codex MCP (`codex` / `codex-reply`) is one
+backend; a Claude Code subagent, a CLI agent in a worktree, or another MCP coding server are
+equally valid. Nothing in `SKILL.md` names a host, a cluster, a project, or an MCP server.
+
+## Install
+
 ```bash
-bash install.sh --mcp-name codex-<you> --codex-home ~/.codex_<you> --shared-user <you> \
-     [--codex-bin ~/.local/bin/codex] [--iam-cmd "<identity switch cmd>"] [--skills-dir ~/.claude/skills]
-claude mcp add --scope user codex-<you> -e CODEX_HOME=~/.codex_<you> -e SHARED_USER=<you> -- ~/.local/bin/codex mcp-server
-claude mcp list   # 应显示 codex-<you> connected
-cp codex-orchestrate.env.example <repo>/.codex-orchestrate.env   # 每个项目填一份
+git clone https://github.com/xiaji2021/orchestration-engineering.git
+cd orchestration-engineering
+bash install.sh                          # -> ~/.claude/skills/orchestrate-delegation
+# bash install.sh --skills-dir <repo>/.claude/skills   # project-scoped
+# bash install.sh --link                               # symlink, to track updates
 ```
 
-## 内容
-`SKILL.md.tmpl`（安装时替换 `{{MCP_NAME}}` 等占位符）· `DELEGATION_TEMPLATE.md` · `scripts/preflight.sh <repo>` · `codex-orchestrate.env.example`
+Optional, per project:
 
-## 核心规则
-一个会话 = 一个 ≤2h 里程碑（MCP 3h 硬超时会丢结果）；brief 带时间盒与资源预算；Codex 按固定报告契约返回；Claude 独立验证（diff / 定向测试 / 作业核实）；分支合并前子模块 gitlink 硬断言。
+```bash
+cp orchestrate.env.example <repo>/.orchestrate.env    # then fill in what applies — all fields optional
+bash scripts/preflight.sh <repo>                      # sanity check before delegating
+```
+
+Only if you delegate to Codex MCP:
+
+```bash
+claude mcp add --scope user <mcp-name> -e CODEX_HOME=<codex-home> -- <codex-bin> mcp-server
+claude mcp list      # must show <mcp-name> connected
+```
+
+## Contents
+
+| File | Purpose |
+|---|---|
+| `SKILL.md` | the skill itself — mechanism only, zero site-specific names |
+| `DELEGATION_TEMPLATE.md` | the brief template; send only when every field is filled |
+| `scripts/preflight.sh` | pre-delegation check: baseline, submodule gitlinks, env, scheduler load, quota |
+| `orchestrate.env.example` | optional per-project config; every field may be left empty |
+
+## Configuration is optional, and layered
+
+`.orchestrate.env` sharpens the skill but is never required. Layers activate only on their own
+signal: `.gitmodules` turns on the gitlink gate, `sbatch`/`qstat`/`bjobs` (or `SCHED_LIST_CMD`)
+turns on the scheduler layer, a lockfile turns on the lockfile invariant. A laptop repo sees
+nothing about clusters.
+
+## Branches
+
+`main` is the general version and the one to use. `cluster-cscc` is the historical
+MBZUAI-CSCC-specific variant, kept for reference — its Slurm, Lustre-quota and bad-node
+specifics are now expressible as a few lines of `.orchestrate.env`.
