@@ -1,0 +1,93 @@
+---
+name: orchestrate-codex
+description: Delegate coding/experiment work from Claude Code to a Codex MCP server (codex / codex-reply) with a time-boxed brief, project-configured preflight, a fixed report contract, independent verification, and a gated merge. Use when the user asks Claude to have Codex implement, debug, refactor, analyze, or run experiments while Claude stays responsible for planning, verification, and resource policy.
+---
+
+# Orchestrate Codex
+
+Claude 是编排者（规划、验证、资源与合并门禁），Codex 是实现工人。**未经 diff、验收标准和定向测试核对的 Codex 结果一律不接受。**
+本 skill 只定义机制；项目细节（子模块名、必需环境变量、作业调度器、资源上限、排除节点）来自项目根目录的 `.codex-orchestrate.env`（见 §1）或 CLAUDE.md，**不要把任何项目专有名词写进本文件**。
+
+## 0. 先知道的硬事实
+- 单次 `codex` 调用 **3 小时硬超时**；超时后结果与 `threadId` 一起丢失，无法 `codex-reply`。
+- 会话运行中不能打断或追加指令；只能 `TaskStop` 后重开（丢进度）。
+- 推论：**一个会话 = 一个 ≤2 小时可完成的里程碑**。耗时任务拆成"实现 → 定向测试 → 提交作业/启动进程 → 记录句柄 → 返回"，绝不让 Codex 守着队列或长跑进程等结果。
+
+## 1. Preflight（委派前，Claude 执行）
+1. `claude mcp list` 中 `{{MCP_NAME}}` 为 connected；否则停止并给出：
+   ```bash
+   {{IAM_CMD}}
+   claude mcp add --scope user {{MCP_NAME}} \
+     -e CODEX_HOME={{CODEX_HOME}} \
+     -e SHARED_USER={{SHARED_USER}} \
+     -- {{CODEX_BIN}} mcp-server
+   ```
+2. 读取项目配置 `.codex-orchestrate.env`（若无则从 CLAUDE.md 提取，或询问用户一次并写入）：
+   ```bash
+   SUBMODULES="..."          # 需要 gitlink 门禁的子模块名，空格分隔，可空
+   REQUIRED_ENV="..."        # 委派与作业必须导出的环境变量名
+   SCHED_LIST_CMD="..."     # 列出本人作业的命令（输出每行: <节点数> <名称> <状态>），无调度器留空
+   MAX_BIG_JOBS=1            # 同时允许的大作业数（节点数>1 视为大作业）
+   EXTRA_SUBMIT_ARGS="..."  # 提交作业时固定附加的参数（如排除坏节点），可空
+   TEST_CMD="..."            # 定向测试命令
+   ```
+3. `git status --porcelain`：记录已有未提交改动，必须保留；并行会话时**划清文件归属**或各用独立 worktree。
+4. 对每个子模块记 gitlink 基线：`git ls-tree HEAD <sub>` → `160000 <sha>`。
+5. 有调度器时按 `SCHED_LIST_CMD` 核对在跑的大作业数是否已达 `MAX_BIG_JOBS`；把剩余预算写进 brief。
+6. 运行 `bash scripts/preflight.sh <repo>`（读同一配置）：自检环境变量、worktree 是否缺子模块、调度器负载、配额。
+
+## 2. 写 brief（用 `DELEGATION_TEMPLATE.md`，字段齐全再发）
+必填：目标与非目标｜必读文件｜约束（worktree/分支、禁改路径、需导出的环境变量、资源预算、排除节点）｜验收命令｜**时间盒**（≤2h；到点先 commit + 写笔记 + 提交作业再收尾）｜**报告契约**（§4）｜失败预案。
+规则：
+- 让 Codex **小步 commit**，每个里程碑立刻写进项目笔记——超时也不丢；
+- 耗时作业：Codex 只做实现 + 定向测试 + 提交 + 记录句柄，**结果分析由 Claude 或后续会话做**；
+- 写明"不得编造未产出的结果"；
+- 作业/后台脚本用解释器**绝对路径**（非交互 shell 内 `conda activate` 常失效），`--export=ALL` 前先导出必需变量；快照/临时 worktree 里子模块可能缺失，必须显式导出其根路径变量。
+
+## 3. 启动与等待
+`codex(cwd=<绝对路径>, prompt=<brief>, sandbox/approval 视任务)`。返回后保存 `threadId`。等待期间 Claude 用 Monitor 盯其提交的作业或准备独立验证，不空转。
+
+## 4. 报告契约（Codex 必须按此返回）
+```
+commits: [<sha> <msg>...]          files: [...]
+jobs: [{id, name, queue/partition, resources, log, output_dir}]   # 无调度器则为进程/产物句柄
+tests: <exact command> → <verbatim summary line>
+gates: {equivalence?, cache/state-consistency?, submodule-gitlink?, quota?}
+open_risks: [...]                  next_command: <one line Claude can run>
+```
+
+## 5. 独立验证（不接受口头汇报）
+1. `git status` + 完整相关 `git diff`，逐条对验收标准；查无关改动、半成品分支、缺测试、过期文档。
+2. 重跑 `TEST_CMD`/定向测试；全仓测试若有既有收集错误，允许"定向 + 静态检查"作为验收，但记录跳过项。
+3. 有作业：核实真实存在、日志与输出路径与 brief 一致、**无重复提交**（同名/同输出目录）、资源不超预算。
+4. 数值交付：抽查一条原始输出，不只看汇总表。
+
+## 6. 同线程返工
+`codex-reply(threadId, 证据)`：失败命令与输出、文件/行或 diff 块、违反的验收条、要求的精确修改、不可变的约束。不要用"再试一次"。若 threadId 已因超时丢失 → 新开会话，brief 写明"前一会话中断，`git status` 看现场，可复用未提交改动"。
+
+## 7. 合并门禁（分支并回主线；硬断言，禁止 `&&` 链式放行）
+```bash
+for sub in $SUBMODULES; do
+  T=$(git ls-tree <branch> "$sub" | awk '{print $1}')
+  [ "$T" = "160000" ] || { echo "ABORT: $sub gitlink=$T"; exit 1; }
+done
+git merge --no-ff <branch> && for sub in $SUBMODULES; do git ls-tree HEAD "$sub"; done
+```
+空输出（分支删了 gitlink）与 `040000`（被展开成目录）都必须拦下；误删后用 `git update-index --add --cacheinfo 160000,<sha>,<sub>` 恢复。
+
+## 8. 收尾
+仅当：验收全部满足、diff 已审、定向测试通过或有明确阻塞记录、用户原有改动完好。汇报：结果、改动路径、验证、残余风险、**作业清单与恢复方式**（会话重启时据此重建监控）。未经用户要求不 push。
+
+## 协作规则
+- 一个连贯任务一个线程；避免 Claude 与 Codex 同时改同一文件；并行会话必须文件归属清晰。
+- 破坏性命令、依赖安装、发布、外部副作用是独立的授权边界。
+- 密钥不进 prompt/diff/输出。
+
+## Lessons（规则出处，去项目化）
+- 超时吞掉多个会话的最终报告 → §0 时间盒、里程碑即写笔记。
+- 分支合并三次删掉子模块 gitlink，`&&` 链把检查放空 → §7 硬断言。
+- 临时 worktree 缺子模块、路径变量未导出 → 整批作业导入失败 → §1.6 preflight、§2 显式导出。
+- 非交互 shell 内 conda activate 失效、分析步骤缺 `PYTHONPATH` → §2 绝对路径。
+- 会话重复提交同名作业；并行会话改同仓混入未跟踪文件 → §5.3、协作规则。
+- 项目并行上限被无意突破 → §1.5 预算写进 brief。
+- 调度器/状态接口偶发空输出 → 监控脚本把空输出当抖动重试，勿判"完成"。
