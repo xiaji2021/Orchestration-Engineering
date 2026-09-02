@@ -26,14 +26,14 @@ Claude 是编排者（规划、验证、资源与合并门禁），Codex 是实�
    ```bash
    SUBMODULES="..."          # 需要 gitlink 门禁的子模块名，空格分隔，可空
    REQUIRED_ENV="..."        # 委派与作业必须导出的环境变量名
-   SCHED_LIST_CMD="..."     # 列出本人作业的命令（输出每行: <节点数> <名称> <状态>），无调度器留空
-   MAX_BIG_JOBS=1            # 同时允许的大作业数（节点数>1 视为大作业）
-   EXTRA_SUBMIT_ARGS="..."  # 提交作业时固定附加的参数（如排除坏节点），可空
+   SCHEDULER="slurm|none"    # 是否有作业调度器
+   MAX_MULTINODE_JOBS=1      # 同时允许的多节点大作业数（无调度器可忽略）
+   EXCLUDE_NODES="..."       # 已知坏节点
    TEST_CMD="..."            # 定向测试命令
    ```
 3. `git status --porcelain`：记录已有未提交改动，必须保留；并行会话时**划清文件归属**或各用独立 worktree。
 4. 对每个子模块记 gitlink 基线：`git ls-tree HEAD <sub>` → `160000 <sha>`。
-5. 有调度器时按 `SCHED_LIST_CMD` 核对在跑的大作业数是否已达 `MAX_BIG_JOBS`；把剩余预算写进 brief。
+5. 有调度器时核对在跑的多节点作业数是否已达 `MAX_MULTINODE_JOBS`；把剩余预算写进 brief。
 6. 运行 `bash scripts/preflight.sh <repo>`（读同一配置）：自检环境变量、worktree 是否缺子模块、调度器负载、配额。
 
 ## 2. 写 brief（用 `DELEGATION_TEMPLATE.md`，字段齐全再发）
@@ -42,7 +42,7 @@ Claude 是编排者（规划、验证、资源与合并门禁），Codex 是实�
 - 让 Codex **小步 commit**，每个里程碑立刻写进项目笔记——超时也不丢；
 - 耗时作业：Codex 只做实现 + 定向测试 + 提交 + 记录句柄，**结果分析由 Claude 或后续会话做**；
 - 写明"不得编造未产出的结果"；
-- 作业/后台脚本用解释器**绝对路径**（非交互 shell 内 `conda activate` 常失效），`--export=ALL` 前先导出必需变量；快照/临时 worktree 里子模块可能缺失，必须显式导出其根路径变量。
+- 调度器提交脚本用解释器**绝对路径**（`sbatch --wrap`/非交互 shell 内 `conda activate` 常失效），`--export=ALL` 前先导出必需变量；快照/临时 worktree 里子模块可能缺失，必须显式导出其根路径变量。
 
 ## 3. 启动与等待
 `codex(cwd=<绝对路径>, prompt=<brief>, sandbox/approval 视任务)`。返回后保存 `threadId`。等待期间 Claude 用 Monitor 盯其提交的作业或准备独立验证，不空转。
@@ -90,4 +90,4 @@ git merge --no-ff <branch> && for sub in $SUBMODULES; do git ls-tree HEAD "$sub"
 - 非交互 shell 内 conda activate 失效、分析步骤缺 `PYTHONPATH` → §2 绝对路径。
 - 会话重复提交同名作业；并行会话改同仓混入未跟踪文件 → §5.3、协作规则。
 - 项目并行上限被无意突破 → §1.5 预算写进 brief。
-- 调度器/状态接口偶发空输出 → 监控脚本把空输出当抖动重试，勿判"完成"。
+- 调度器会计接口偶发空输出 → 监控脚本把空输出当抖动重试，勿判"完成"。

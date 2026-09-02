@@ -19,3 +19,8 @@ cp codex-orchestrate.env.example <repo>/.codex-orchestrate.env   # 每个项目�
 
 ## 核心规则
 一个会话 = 一个 ≤2h 里程碑（MCP 3h 硬超时会丢结果）；brief 带时间盒与资源预算；Codex 按固定报告契约返回；Claude 独立验证（diff / 定向测试 / 作业核实）；分支合并前子模块 gitlink 硬断言。
+
+## cluster-cscc 分支附加内容
+- preflight 直接调用 `squeue` / `lfs quota`；配置键 `SCHEDULER=slurm`、`MAX_MULTINODE_JOBS`、`EXCLUDE_NODES`。
+- 身份切换：`install.sh --iam-cmd "iam <you>"`。
+- 经验：`sbatch --wrap` 内 conda activate 失效（用 env python 绝对路径）；`sacct` 偶发空输出（监控视为抖动）；Lustre 客户端缓存导致跨节点看到旧文件（重启服务前 md5 校验）；快照 worktree 缺子模块须显式导出根路径变量。
