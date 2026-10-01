@@ -31,9 +31,9 @@ them cost real work:
 ## Works with any worker
 
 The skill defines what a worker backend must expose — how to start it, whether a thread can be
-resumed, its hard wall-clock limit — and adapts. Codex MCP (`codex` / `codex-reply`) is one
-backend; a Claude Code subagent, a CLI agent in a worktree, or another MCP coding server are
-equally valid. Nothing in `SKILL.md` names a host, a cluster, a project, or an MCP server.
+resumed, its hard wall-clock limit — and adapts. `codex exec` / `codex exec resume` (or the Codex app server when you need `turn/interrupt`) is the
+recommended Codex path; a Claude Code subagent or `claude -p`, Gemini CLI, aider, any CLI agent in a
+worktree, or an MCP coding server are equally valid. Nothing in `SKILL.md` names a host, a cluster, a project, or an MCP server.
 
 ## Install
 
@@ -52,12 +52,10 @@ cp orchestrate.env.example <repo>/.orchestrate.env    # then fill in what applie
 bash scripts/preflight.sh <repo>                      # sanity check before delegating
 ```
 
-Only if you delegate to Codex MCP:
-
-```bash
-claude mcp add --scope user <mcp-name> -e CODEX_HOME=<codex-home> -- <codex-bin> mcp-server
-claude mcp list      # must show <mcp-name> connected
-```
+No MCP registration is needed any more. **Update note (2026-10):** OpenAI removed `codex mcp-server`
+in Codex v0.154.0, so the old `codex` / `codex-reply` MCP setup no longer works — if you have one
+registered, run `claude mcp remove <mcp-name>`. The skill now drives Codex through `codex exec` /
+`codex exec resume` (session ids persist on disk, so a killed run is resumable) or `codex app-server`.
 
 ## Contents
 
@@ -65,6 +63,8 @@ claude mcp list      # must show <mcp-name> connected
 |---|---|
 | `SKILL.md` | the skill itself — mechanism only, zero site-specific names |
 | `DELEGATION_TEMPLATE.md` | the brief template; send only when every field is filled |
+| `BACKENDS.md` | per-backend start / handle / resume / interrupt, marked verified vs docs-only |
+| `scripts/run_worker.sh` | uniform launcher (codex, claude, gemini, aider): captures the handle, report and exit code |
 | `scripts/preflight.sh` | pre-delegation check: baseline, submodule gitlinks, env, scheduler load, quota |
 | `orchestrate.env.example` | optional per-project config; every field may be left empty |
 

@@ -21,8 +21,8 @@ if [ "$LINK" = 1 ]; then
   rm -rf "$D"; ln -s "$HERE" "$D"; echo "linked $D -> $HERE"
 else
   mkdir -p "$D/scripts"
-  cp "$HERE/SKILL.md" "$HERE/DELEGATION_TEMPLATE.md" "$D/"
-  cp "$HERE/scripts/preflight.sh" "$D/scripts/"; chmod +x "$D/scripts/preflight.sh"
+  cp "$HERE/SKILL.md" "$HERE/DELEGATION_TEMPLATE.md" "$HERE/BACKENDS.md" "$D/"
+  cp "$HERE/scripts/preflight.sh" "$HERE/scripts/run_worker.sh" "$D/scripts/"; chmod +x "$D/scripts/"*.sh
   echo "installed to $D"
 fi
 
@@ -32,8 +32,7 @@ Next (all optional):
   1. Per project: cp orchestrate.env.example <repo>/.orchestrate.env and fill in what applies.
      Nothing set is a valid state — the skill auto-detects submodules and schedulers.
   2. Sanity check:  bash scripts/preflight.sh <repo>
-  3. If you delegate to Codex MCP, register it once, with your own names:
-       claude mcp add --scope user <mcp-name> -e CODEX_HOME=<codex-home> -- <codex-bin> mcp-server
-       claude mcp list        # must show <mcp-name> connected
-     Any other backend (Claude Code subagent, a CLI agent, another MCP server) needs no setup.
+  3. Workers need no registration: `codex exec`, `claude -p`, Gemini CLI, aider, or a Claude Code
+     subagent are used directly. (`codex mcp-server` was removed upstream in v0.154.0 — if you
+     registered one, drop it:  claude mcp remove <mcp-name>)
 NEXT

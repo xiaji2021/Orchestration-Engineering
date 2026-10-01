@@ -22,6 +22,16 @@ else
   echo "== config: none (using auto-detection only; see orchestrate.env.example)"
 fi
 
+echo "== worker backends"
+for b in codex claude gemini aider opencode; do
+  command -v "$b" >/dev/null 2>&1 && echo "found: $b ($("$b" --version 2>/dev/null | head -1))"
+done
+command -v codex >/dev/null 2>&1 && ! codex exec --help >/dev/null 2>&1 && echo "WARN: codex present but 'codex exec --help' failed — check install/login"
+if command -v claude >/dev/null 2>&1; then
+  claude mcp list 2>/dev/null | grep -E 'mcp-server' | sed 's/^/WARN: removed backend still registered (codex mcp-server was removed in v0.154.0): /'
+fi
+[ -n "${WORKER_BACKEND:-}" ] && echo "configured backend: $WORKER_BACKEND"
+
 echo "== git"
 if git -C "$R" rev-parse --git-dir >/dev/null 2>&1; then
   echo "branch: $(git -C "$R" branch --show-current 2>/dev/null || echo '(detached)')"

@@ -12,7 +12,8 @@ Copy, fill every field, then send as the worker's prompt. Project values come fr
   absolute path — `conda activate` routinely fails there)
 - Resource budget: (queue/partition, nodes x accelerators, max concurrent jobs, excluded nodes)
   — check what is already running *before* submitting anything
-- Timebox: <= 2/3 of the backend's hard limit. At the deadline: commit, write notes,
+- Backend + handle: (codex exec | app-server | claude -p | subagent | other) — session id goes in the notes file the moment it is known
+- Timebox: <= 2/3 of the backend's hard limit (your shell/CI timeout if the backend has none). At the deadline: commit, write notes,
   submit/record handles, then stop.
 
 ## TASK

@@ -1,6 +1,6 @@
 ---
 name: orchestrate-delegation
-description: Delegate implementation, debugging, refactoring, or experiment work to a worker agent (Codex MCP, a Claude Code subagent, another CLI or MCP coding agent) while you stay the orchestrator — planning, resource budgets, a fixed report contract, independent verification, and a gated merge. Use when the user asks to hand coding or experiment work to another agent, to run long or expensive work in the background, or to coordinate parallel agent sessions on one repo or cluster.
+description: Delegate implementation, debugging, refactoring, or experiment work to a worker agent (Codex via `codex exec` or app-server, a Claude Code subagent or `claude -p`, Gemini CLI, aider, another CLI or MCP coding agent) while you stay the orchestrator — planning, resource budgets, a fixed report contract, independent verification, and a gated merge. Use when the user asks to hand coding or experiment work to another agent, to run long or expensive work in the background, or to coordinate parallel agent sessions on one repo or cluster.
 ---
 
 # Orchestrate Delegation
@@ -17,12 +17,16 @@ Before delegating, establish for the backend you will use: **(a) hard wall-clock
 
 | Backend | start | resume | typical limits |
 |---|---|---|---|
-| Codex MCP | `codex(cwd, prompt, sandbox/approval)` → save `threadId` | `codex-reply(threadId, evidence)` | ~3h hard timeout; **on timeout the result and threadId are both lost**; no mid-run interrupt |
-| Claude Code subagent | `Agent`/`Task` tool | new agent, or `SendMessage` where supported | context-bound rather than clock-bound; no mid-run steering |
-| CLI agent (aider, gemini-cli, codex exec, …) | shell command in a worktree | re-invoke with prior state in the prompt | shell/session timeout; state lives in the repo, not the tool |
-| Another MCP coding server | its start tool | its continuation tool, if any | read the tool description before trusting either |
+| Codex CLI (`codex exec`) | `codex exec -C <worktree> -s workspace-write --json -o <report.md> "<brief>"` run in the background; capture the session id from the `--json` stream | `codex exec resume <session-id> "<evidence>"` (or `--last`, cwd-scoped) | no fixed 3h tool timeout — the limit is your shell/CI/background-task timeout; sessions persist on disk, so a killed run is resumable; no mid-run steering |
+| Codex app server (`codex app-server`, experimental) | JSON-RPC: `thread/start` → `turn/start` | `thread/resume`; thread ids persist as JSONL | `turn/interrupt` gives real mid-run interrupt; use when you need steering or a long-lived client; stdio is the default, WebSocket is unsupported for production |
+| Claude Code subagent | `Agent`/`Task` tool | `SendMessage` to the agent id where supported, else a new agent | context-bound rather than clock-bound; no mid-run steering |
+| Claude Code headless (`claude -p`) | shell, in a worktree; `--output-format json` returns a session id | `--resume <session-id>` | shell/session timeout; permission mode must be set explicitly |
+| Other CLI agent (Gemini CLI `-p`, aider `--message`, Cursor/OpenCode CLIs, …) | shell command in a worktree | re-invoke with prior state in the prompt, or the tool's own resume flag | shell timeout; state lives in the repo, not the tool |
+| Any MCP coding server | its start tool | its continuation tool, if any | read the tool description before trusting either |
 
-If (b) or (c) is unavailable or unknown, assume the worst: no resume, no interrupt.
+> **Removed backend — do not use.** `codex mcp-server` / `codex-mcp-server` (the `codex` + `codex-reply` MCP tools earlier versions of this skill used) was removed by OpenAI in v0.154.0 (2026-09-13). Anything that still launches it — including an MCP entry registered with `claude mcp add … -- codex mcp-server` — fails with "connection closed". Remove the entry and switch to `codex exec` or the app server. `codex mcp` (Codex as an MCP *client*) is unrelated and still works.
+
+Exact commands, observed gotchas and a launcher: `BACKENDS.md`, `scripts/run_worker.sh`. CLI flags drift between releases: run `<tool> --help` once during preflight and use what it shows, not what this table remembers. If (b) or (c) is unavailable or unknown, assume the worst: no resume, no interrupt.
 
 **Rules that follow from the limits — these are the heart of the skill:**
 - **One delegation = one milestone completable in ≲⅔ of the hard limit** (≤2h against a 3h cap). Anything larger gets split.
@@ -31,10 +35,10 @@ If (b) or (c) is unavailable or unknown, assume the worst: no resume, no interru
 
 ## 1. Preflight (you run this, before writing the brief)
 
-1. **Backend reachable.** Confirm the worker exists — for an MCP backend, that its server is connected (e.g. `claude mcp list`); for a subagent, that the agent type exists. If not, stop and give the user the exact one-line fix rather than silently falling back to doing the work yourself.
+1. **Backend reachable.** Confirm the worker exists — for a CLI backend, that the binary is on `PATH`, authenticated, and its `--help` still shows the flags you plan to use; for an MCP backend, that its server is connected (e.g. `claude mcp list`); for a subagent, that the agent type exists. `scripts/preflight.sh` checks all three. If not, stop and give the user the exact one-line fix rather than silently falling back to doing the work yourself.
 2. **Load project config**, in this order — the skill works with none of it, and gets sharper with each layer present:
    - `.orchestrate.env` in the repo root (also accept `.codex-orchestrate.env`);
-   - else `CLAUDE.md` / `AGENTS.md` / `README`;
+   - else `AGENTS.md` (read natively by Codex and most other agents) / `CLAUDE.md` / `README`;
    - else infer from the repo (see 3);
    - else ask the user **once**, and write the answers into `.orchestrate.env` so nobody re-answers them.
    ```bash
@@ -68,7 +72,7 @@ Non-negotiable brief rules: small commits; milestone → notes file immediately;
 
 ## 3. Launch, then stay useful
 
-Start with an absolute `cwd`. **Save the handle** (`threadId`, agent id, PID, job id) the moment you get it — it is unrecoverable later. While the worker runs, do not idle: monitor the jobs it submitted, prepare the verification commands, or review adjacent code. Do not start a second worker on the same files.
+Start with an absolute `cwd`. **Save the handle** (Codex session/thread id, agent id, PID, job id) the moment you get it — it is unrecoverable later. While the worker runs, do not idle: monitor the jobs it submitted, prepare the verification commands, or review adjacent code. Do not start a second worker on the same files.
 
 ## 4. Report contract (require exactly this back)
 
@@ -92,8 +96,8 @@ next:      <one command the orchestrator can run next>
 
 ## 6. Rework in the same thread
 
-Resume (`codex-reply(threadId, …)` or the backend's equivalent) with **evidence**: the failing command and its output, the file/line or diff hunk, which acceptance item was violated, the exact change required, and the constraints that still hold. Never "please try again".
-If the thread is gone (timeout, lost handle): start a fresh one whose brief says *"a previous session was interrupted; inspect `git status` for work in progress and reuse the uncommitted changes."*
+Resume (`codex exec resume <session-id> "…"`, `thread/resume`, `claude -p --resume <id>`, `SendMessage`, or the backend's equivalent) with **evidence**: the failing command and its output, the file/line or diff hunk, which acceptance item was violated, the exact change required, and the constraints that still hold. Never "please try again".
+If the thread is gone (lost handle, purged session, backend without resume): start a fresh one whose brief says *"a previous session was interrupted; inspect `git status` for work in progress and reuse the uncommitted changes."*
 
 ## 7. Merge gate: assert structural invariants, and never chain them
 
@@ -117,6 +121,7 @@ Only when acceptance is fully met, the diff is reviewed, tests pass or the block
 
 - One coherent task per thread. Never have two agents editing the same file; parallel sessions need worktrees or written file ownership.
 - Destructive commands, dependency installs, releases, and anything with external side effects are **separate authorizations** — ask, per action.
+- Give the worker the narrowest sandbox that works (`workspace-write`, never `danger-full-access` / bypass-permissions flags unless the user authorized it for this run).
 - Secrets never enter a prompt, a diff, or a report.
 
 ## §S Scheduler / long-running layer (only when a scheduler or long job exists)
@@ -125,7 +130,7 @@ Count running jobs before submitting; enforce `MAX_BIG_JOBS`; append `EXTRA_SUBM
 
 ## Why these rules exist (each earned)
 
-- A hard timeout swallowed several sessions' final reports → §0 timebox + journal milestones as they happen.
+- A hard timeout (back when Codex ran as an MCP tool with a ~3h cap) swallowed several sessions' final reports → §0 timebox + journal milestones as they happen.
 - A branch merge deleted submodule gitlinks three times; an `&&` chain made the guard a no-op → §7 hard assertions.
 - A temporary worktree lacked submodules and a path variable was unexported → a whole batch of jobs failed at import → §1.3–1.4, §2.
 - `conda activate` failed in a non-interactive shell; an analysis step lacked `PYTHONPATH` → §2 absolute paths, explicit exports.
